@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2018, 2020 Jeffery To
+# Copyright (C) 2018-2023 Jeffery To
 #
 # This is free software, licensed under the GNU General Public License v2.
 # See /LICENSE for more information.
@@ -7,8 +7,8 @@
 
 include $(TOPDIR)/rules.mk
 
-GO_VERSION_MAJOR_MINOR:=1.19
-GO_VERSION_PATCH:=13
+GO_VERSION_MAJOR_MINOR:=1.24
+GO_VERSION_PATCH:=1
 
 PKG_NAME:=golang
 PKG_VERSION:=$(GO_VERSION_MAJOR_MINOR)$(if $(GO_VERSION_PATCH),.$(GO_VERSION_PATCH))
@@ -20,7 +20,7 @@ GO_SOURCE_URLS:=https://dl.google.com/go/ \
 
 PKG_SOURCE:=go$(PKG_VERSION).src.tar.gz
 PKG_SOURCE_URL:=$(GO_SOURCE_URLS)
-PKG_HASH:=ccf36b53fb0024a017353c3ddb22c1f00bc7a8073c6aac79042da24ee34434d3
+PKG_HASH:=8244ebf46c65607db10222b5806aeb31c1fcf8979c1b6b12f60c677e9a3c0656
 
 PKG_MAINTAINER:=Jeffery To <jeffery.to@gmail.com>
 PKG_LICENSE:=BSD-3-Clause
@@ -30,11 +30,10 @@ PKG_CPE_ID:=cpe:/a:golang:go
 PKG_BUILD_DEPENDS:=golang/host
 PKG_BUILD_DIR:=$(BUILD_DIR)/go-$(PKG_VERSION)
 PKG_BUILD_PARALLEL:=1
-PKG_USE_MIPS16:=0
+PKG_BUILD_FLAGS:=no-mips16
 
 PKG_GO_PREFIX:=/usr
 PKG_GO_VERSION_ID:=$(GO_VERSION_MAJOR_MINOR)
-PKG_GO_ROOT:=$(PKG_GO_PREFIX)/lib/go-$(PKG_GO_VERSION_ID)
 
 HOST_BUILD_DIR:=$(BUILD_DIR_HOST)/go-$(PKG_VERSION)
 HOST_BUILD_PARALLEL:=1
@@ -62,6 +61,10 @@ HOST_GO_VALID_OS_ARCH:= \
   \
   aix_ppc64 \
   js_wasm \
+  wasip1_wasm \
+  \
+  freebsd_riscv64 \
+  openbsd_riscv64 \
   \
   linux_ppc64 linux_ppc64le \
   linux_mips linux_mipsle linux_mips64 linux_mips64le \
@@ -69,9 +72,18 @@ HOST_GO_VALID_OS_ARCH:= \
   \
   openbsd_mips64
 
-BOOTSTRAP_SOURCE:=go1.4-bootstrap-20171003.tar.gz
+ifeq ($(HOST_ARCH),x86_64)
+	PKG_ARCH:=amd64
+	BOOTSTRAP_HASH:=999805bed7d9039ec3da1a53bfbcafc13e367da52aa823cb60b68ba22d44c616
+endif
+
+ifeq ($(HOST_ARCH),aarch64)
+	PKG_ARCH:=arm64
+	BOOTSTRAP_HASH:=c15fa895341b8eaf7f219fada25c36a610eb042985dc1a912410c1c90098eaf2
+endif
+
+BOOTSTRAP_SOURCE:=go1.22.6.linux-$(PKG_ARCH).tar.gz
 BOOTSTRAP_SOURCE_URL:=$(GO_SOURCE_URLS)
-BOOTSTRAP_HASH:=f4ff5b5eb3a3cae1c993723f3eab519c5bae18866b5e5f96fe1102f0cb5c3e52
 
 BOOTSTRAP_BUILD_DIR:=$(HOST_BUILD_DIR)/.go_bootstrap
 
@@ -181,8 +193,7 @@ ifeq ($(BOOTSTRAP_ROOT_DIR),)
   $(eval $(call Download,golang-bootstrap))
 
   define Bootstrap/Prepare
-	mkdir -p "$(BOOTSTRAP_BUILD_DIR)"
-	$(BOOTSTRAP_UNPACK)
+	mkdir -p "$(BOOTSTRAP_BUILD_DIR)" && $(BOOTSTRAP_UNPACK) ;
   endef
   Hooks/HostPrepare/Post+=Bootstrap/Prepare
 
@@ -202,6 +213,7 @@ endif
 $(eval $(call GoCompiler/AddProfile,Host,$(HOST_BUILD_DIR),$(HOST_GO_PREFIX),$(HOST_GO_VERSION_ID),$(GO_HOST_OS_ARCH),$(HOST_GO_INSTALL_SUFFIX)))
 
 HOST_GO_VARS= \
+	GOHOSTARCH="$(GO_HOST_ARCH)" \
 	GOCACHE="$(GO_BUILD_CACHE_DIR)" \
 	GOENV=off \
 	CC="$(HOSTCC_NOCACHE)" \
@@ -212,10 +224,6 @@ define Host/Compile
 	$(call GoCompiler/Host/CheckHost,$(HOST_GO_VALID_OS_ARCH))
 
 	mkdir -p "$(GO_BUILD_CACHE_DIR)"
-
-	$(call GoCompiler/Bootstrap/Make, \
-		$(HOST_GO_VARS) \
-	)
 
 	$(call GoCompiler/Host/Make, \
 		GOROOT_BOOTSTRAP="$(BOOTSTRAP_ROOT_DIR)" \
@@ -263,7 +271,7 @@ $(eval $(call GoCompiler/AddProfile,Package,$(PKG_BUILD_DIR),$(PKG_GO_PREFIX),$(
 PKG_GO_ZBOOTSTRAP_MODS:= \
 	s/defaultGO386 = `[^`]*`/defaultGO386 = `$(or $(GO_386),sse2)`/; \
 	s/defaultGOAMD64 = `[^`]*`/defaultGOAMD64 = `$(or $(GO_AMD64),v1)`/; \
-	s/defaultGOARM = `[^`]*`/defaultGOARM = `$(or $(GO_ARM),5)`/; \
+	s/defaultGOARM = `[^`]*`/defaultGOARM = `$(or $(GO_ARM),7)`/; \
 	s/defaultGOMIPS = `[^`]*`/defaultGOMIPS = `$(or $(GO_MIPS),hardfloat)`/; \
 	s/defaultGOMIPS64 = `[^`]*`/defaultGOMIPS64 = `$(or $(GO_MIPS64),hardfloat)`/; \
 	s/defaultGOPPC64 = `[^`]*`/defaultGOPPC64 = `$(or $(GO_PPC64),power8)`/;
@@ -271,6 +279,7 @@ PKG_GO_ZBOOTSTRAP_MODS:= \
 PKG_GO_ZBOOTSTRAP_PATH:=$(PKG_BUILD_DIR)/src/internal/buildcfg/zbootstrap.go
 
 PKG_GO_VARS= \
+	GOHOSTARCH="$(GO_HOST_ARCH)" \
 	GOCACHE="$(GO_BUILD_CACHE_DIR)" \
 	GOENV=off \
 	GO_GCC_HELPER_PATH="$$$$PATH" \
@@ -291,9 +300,10 @@ PKG_GO_LDFLAGS= \
 	-extldflags '$(patsubst -z%,-Wl$(comma)-z$(comma)%,$(TARGET_LDFLAGS))' \
 	$(if $(CONFIG_NO_STRIP)$(CONFIG_DEBUG),,-s -w)
 
+# setting -trimpath is not necessary here because the paths inside the
+# compiler binary are relative to GOROOT_FINAL (PKG_GO_ROOT), which is
+# static / not dependent on the build environment
 PKG_GO_INSTALL_ARGS= \
-	-buildvcs=false \
-	-trimpath \
 	-ldflags "all=$(PKG_GO_LDFLAGS)" \
 	$(if $(PKG_GO_GCFLAGS),-gcflags "all=$(PKG_GO_GCFLAGS)") \
 	$(if $(PKG_GO_ASMFLAGS),-asmflags "all=$(PKG_GO_ASMFLAGS)") \
@@ -329,7 +339,6 @@ define Build/Compile
 		cd "$(PKG_BUILD_DIR)/bin" ; \
 		export $(GO_PKG_TARGET_VARS) ; \
 		$(CP) go go-host ; \
-		GOROOT_FINAL="$(PKG_GO_ROOT)" \
 		GO_GCC_HELPER_CC="$(TARGET_CC)" \
 		GO_GCC_HELPER_CXX="$(TARGET_CXX)" \
 		$(PKG_GO_VARS) \
